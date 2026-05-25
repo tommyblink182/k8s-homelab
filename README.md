@@ -1,7 +1,7 @@
 # K8s Local Cluster — Docker Desktop
 
-Kubernetes 1.34.3 su Docker Desktop (Windows, WSL2 backend).  
-Applicazioni: **n8n**, **Open-WebUI** (namespace `ollama`), **Qdrant**, **ingress-nginx**.
+Kubernetes su Docker Desktop (Windows, WSL2 backend).  
+Script di backup/restore per proteggere i dati dei PVC da reset del cluster (aggiornamenti Docker Desktop, "Reset to factory defaults").
 
 ---
 
@@ -72,26 +72,25 @@ Il backup **non è permanente** su Windows. Le cartelle `volumes/` esistono solo
 
 ```
 C:\k8s-data\
-├── backup.ps1                    ← copia dati pod → Windows (prima di aggiornare Docker)
-├── restore.ps1                   ← applica manifest + dati Windows → pod (dopo aggiornamento)
+├── backup.ps1       ← esporta manifest + copia dati pod → Windows (prima di aggiornare Docker)
+├── restore.ps1      ← applica manifest + copia dati Windows → pod (dopo aggiornamento)
 ├── README.md
 │
-├── n8n\manifest\
-│   ├── deployments.yaml
-│   ├── services.yaml
-│   ├── pvcs.yaml
-│   ├── configmaps.yaml
-│   ├── secrets.yaml
-│   └── ingress.yaml
-│
-├── ollama\manifest\              ← namespace ollama, deployment: open-webui
-│   └── (stessa struttura)
-│
+└── <namespace>\
+    ├── manifest\    ← file JSON generati da backup.ps1 (kubectl apply al restore)
+    └── volumes\     ← TEMPORANEO: dati PVC copiati via kubectl cp (solo tra backup e restore)
+```
+
+Le cartelle `<namespace>/` vengono create automaticamente da `backup.ps1` la prima volta: una per ogni namespace non-di-sistema trovato nel cluster.
+
+**Esempio** — con n8n, Open-WebUI (namespace `ollama`), Qdrant e ingress-nginx:
+
+```
+C:\k8s-data\
+├── n8n\manifest\          ← deployments.json, services.json, pvcs.json, ...
+├── ollama\manifest\
 ├── qdrant\manifest\
-│   └── (stessa struttura)
-│
-└── ingress-nginx\manifest\       ← no PVC, solo manifest
-    └── (stessa struttura)
+└── ingress-nginx\manifest\   ← nessun PVC, solo manifest
 ```
 
 ---
@@ -143,19 +142,17 @@ Opzioni:
 
 ---
 
-## Applicazioni e URL locali
+## Ingress e file hosts
 
-| App | Namespace | Deployment | URL locale |
-|-----|-----------|------------|------------|
-| n8n | `n8n` | `n8n` | http://n8n.kubernetes.local |
-| Open-WebUI | `ollama` | `open-webui` | http://open-webui.kubernetes.local |
-| Qdrant | `qdrant` | `qdrant` | http://qdrant.kubernetes.local |
+Se le app espongono un Ingress, i relativi hostname devono essere aggiunti al file `hosts` di Windows (`C:\Windows\System32\drivers\etc\hosts`):
 
-Le voci DNS devono essere nel file `hosts` di Windows (`C:\Windows\System32\drivers\etc\hosts`):
 ```
-127.0.0.1  n8n.kubernetes.local
-127.0.0.1  open-webui.kubernetes.local
-127.0.0.1  qdrant.kubernetes.local
+127.0.0.1  <app>.kubernetes.local
+```
+
+Verifica le voci presenti:
+```powershell
+Get-Content "C:\Windows\System32\drivers\etc\hosts" | Select-String "kubernetes.local"
 ```
 
 ---
@@ -169,21 +166,17 @@ kubectl get ingress -A
 kubectl get pvc -A
 
 # Verifica dati accessibili in un pod
-kubectl exec -n n8n deployment/n8n -- ls -la /home/node/.n8n/
-kubectl exec -n ollama deployment/open-webui -- ls -la /app/backend/data/
-kubectl exec -n qdrant deployment/qdrant -- ls -la /qdrant/storage/
+kubectl exec -n <namespace> deployment/<nome> -- ls -la <mount-path>
 
 # Dove vivono fisicamente i dati sul nodo K8s (dietro le quinte)
 kubectl debug node/desktop-worker -it --image=busybox:1.36 -- sh
 # poi dentro la shell: ls /host/var/local-path-provisioner/
 
 # Forza restart di un deployment
-kubectl rollout restart deployment/n8n -n n8n
-kubectl rollout restart deployment/open-webui -n ollama
-kubectl rollout restart deployment/qdrant -n qdrant
+kubectl rollout restart deployment/<nome> -n <namespace>
 
 # Stato rollout
-kubectl rollout status deployment/n8n -n n8n
+kubectl rollout status deployment/<nome> -n <namespace>
 ```
 
 ---
@@ -201,27 +194,21 @@ kubectl describe pod <pod-name> -n <namespace>
 kubectl get pods -A
 ```
 
-**`kubectl cp` lento o si blocca** — normale per volumi grandi (Open-WebUI può essere >800 MB). Attendere.
+**`kubectl cp` lento o si blocca** — normale per volumi grandi (possono superare 1 GB). Attendere.
 
-**Restore parziale — ripeti solo un namespace**
+**Restore parziale — ripeti manualmente un solo namespace**
 ```powershell
-# Esempio per n8n
-$pod = kubectl get pod -n n8n -l app=n8n -o jsonpath='{.items[0].metadata.name}'
-kubectl cp "C:\k8s-data\n8n\volumes\n8n-data\." "n8n/${pod}:/home/node/.n8n"
-kubectl rollout restart deployment/n8n -n n8n
-kubectl rollout status deployment/n8n -n n8n
+$pod = kubectl get pod -n <namespace> -o jsonpath='{.items[0].metadata.name}'
+kubectl cp "C:\k8s-data\<namespace>\volumes\<pvc-name>\." "<namespace>/${pod}:<mount-path>"
+kubectl rollout restart deployment/<nome> -n <namespace>
+kubectl rollout status deployment/<nome> -n <namespace>
 ```
 
 **Ingress non risponde dopo restore**
 ```powershell
-kubectl get deployment -n ingress-nginx
+kubectl get deployments -n ingress-nginx
 kubectl rollout status deployment/ingress-nginx -n ingress-nginx
 kubectl logs -n ingress-nginx deployment/ingress-nginx
-```
-
-**Verificare che il file `hosts` sia configurato**
-```powershell
-Get-Content "C:\Windows\System32\drivers\etc\hosts" | Select-String "kubernetes.local"
 ```
 
 ---
@@ -232,5 +219,4 @@ Get-Content "C:\Windows\System32\drivers\etc\hosts" | Select-String "kubernetes.
 |---|---|
 | Kubernetes | 1.34.3 |
 | Docker Desktop | Windows, WSL2 backend |
-| n8n | 2.21.7 |
 | Storage class | `standard` (local-path-provisioner, gestito da Docker Desktop) |
