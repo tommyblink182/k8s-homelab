@@ -1,153 +1,128 @@
-# K8s Cluster Backup
-# Auto-scopre tutti i namespace applicativi, esporta i manifest K8s aggiornati
-# e copia i dati di TUTTI i PVC via kubectl cp (nessun namespace hardcoded).
-# Flusso: .\backup.ps1  →  aggiorna Docker Desktop  →  .\restore.ps1
-# Uso: .\backup.ps1 [-DryRun]
-
+#Requires -Version 7.4
+<#
+.SYNOPSIS
+    Backup del cluster Kubernetes di Docker Desktop (risorse, Helm, dati dei PVC) in una cartella con timestamp.
+.DESCRIPTION
+    Il contesto e' obbligatorio e non viene mai cambiato. Mostra il piano, chiede una sola conferma, poi:
+    inventario -> export risorse -> valori Helm -> dati dei PVC (app a 0 repliche, poi ripristinate) -> verifica.
+    Con -IncludeDockerDesktop salva anche impostazioni e volumi Docker non-K8s.
+    La copia dei vhdx si fa con backup-vhdx.ps1 a Docker Desktop chiuso.
+.EXAMPLE
+    .\backup.ps1 -Context docker-desktop -DryRun
+.EXAMPLE
+    .\backup.ps1 -Context docker-desktop -IncludeDockerDesktop -PostgresContainer postgresql_uni
+#>
+[CmdletBinding()]
 param(
-    [string]$BackupPath = "C:\k8s-data",
-    [switch]$DryRun     = $false
+    [Parameter(Mandatory)][string]$Context,
+    [string]$BackupRoot = 'C:\DockerBackups',
+    [string[]]$Namespace,
+    [switch]$IncludeDockerDesktop,
+    [string]$PostgresContainer,
+    [string]$PostgresUser = 'postgres',
+    [string[]]$ExcludeVolume,
+    [string]$HelperImage = 'alpine:3.20',
+    [switch]$AllowNonDockerDesktop,
+    [switch]$DryRun,
+    [switch]$Yes
 )
 
-Write-Host "=== K8s Cluster Backup ===" -ForegroundColor Cyan
-Write-Host "Backup Path: $BackupPath" -ForegroundColor Cyan
-Write-Host "Dry Run:     $DryRun`n" -ForegroundColor Cyan
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version 1.0
+. (Join-Path $PSScriptRoot 'lib\Common.ps1')
+. (Join-Path $PSScriptRoot 'lib\K8s.ps1')
+. (Join-Path $PSScriptRoot 'lib\Pvc.ps1')
+. (Join-Path $PSScriptRoot 'lib\DockerDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\Verify.ps1')
 
-# ── Verifica cluster ─────────────────────────────────────────────────────────
-kubectl get namespaces -o name 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Cluster non accessibile." -ForegroundColor Red; exit 1
-}
-Write-Host "Cluster accessibile." -ForegroundColor Green
+Initialize-ToolEncoding
+Initialize-KubeContext -Context $Context -AllowNonDockerDesktop:$AllowNonDockerDesktop
+Assert-SafeBackupRoot -Path $BackupRoot
 
-# ── Auto-discover namespace applicativi (escludi quelli di sistema) ───────────
-$SYSTEM_NS = @("kube-system","kube-public","kube-node-lease","local-path-storage","default")
-$app_ns = (kubectl get ns -o jsonpath='{.items[*].metadata.name}') -split ' ' |
-          Where-Object { $_ -notin $SYSTEM_NS }
-
-if (-not $app_ns) {
-    Write-Host "WARNING: Nessun namespace applicativo trovato." -ForegroundColor Yellow; exit 0
-}
-Write-Host "Namespace applicativi: $($app_ns -join ', ')`n" -ForegroundColor Gray
-
-# ── Helper: esporta una risorsa K8s pulita (senza campi runtime) ──────────────
-function Export-Resource {
-    param([string]$Namespace, [string]$ResourceType, [string]$OutFile)
-
-    $raw = kubectl get $ResourceType -n $Namespace -o json 2>&1
-    if ($LASTEXITCODE -ne 0) { return $false }
-
-    $list = $raw | ConvertFrom-Json
-    if (-not $list.items -or $list.items.Count -eq 0) { return $false }
-
-    foreach ($item in $list.items) {
-        # Rimuovi campi runtime (non servono per kubectl apply su cluster fresco)
-        @('resourceVersion','uid','generation','selfLink','creationTimestamp','managedFields') |
-            ForEach-Object { $item.metadata.PSObject.Properties.Remove($_) }
-        if ($item.metadata.annotations) {
-            $item.metadata.annotations.PSObject.Properties.Remove('kubectl.kubernetes.io/last-applied-configuration')
-            $item.metadata.annotations.PSObject.Properties.Remove('deployment.kubernetes.io/revision')
-        }
-        $item.PSObject.Properties.Remove('status')
-    }
-    $list.PSObject.Properties.Remove('metadata')
-
-    if (-not $DryRun) {
-        $list | ConvertTo-Json -Depth 50 | Set-Content -Path $OutFile -Encoding UTF8
-    }
-    return $true
+Write-Log "Cluster: $Context" -Level step
+$appNamespaces = @(Get-AppNamespace -Namespace $Namespace)
+$pvcPlan = @(Get-PvcPlan -Namespace $appNamespaces)
+$volumePlan = @()
+if ($IncludeDockerDesktop) {
+    Assert-Tool docker
+    $volumePlan = @(Get-DockerVolumePlan -ExcludeVolume $ExcludeVolume)
 }
 
-# ── Loop principale ───────────────────────────────────────────────────────────
-foreach ($ns in $app_ns) {
-    Write-Host "─── Namespace: $ns ───" -ForegroundColor Yellow
+Write-Log 'Piano' -Level step
+Write-Log "Destinazione: $BackupRoot\<timestamp>"
+Write-Log "Namespace: $($appNamespaces -join ', ')"
+foreach ($p in $pvcPlan) {
+    $stop = if ($p.Workloads.Count) { ($p.Workloads | ForEach-Object { "$($_.Kind)/$($_.Name) ($($_.Replicas) repliche)" }) -join ', ' } else { 'nessun workload' }
+    Write-Log "PVC $($p.Namespace)/$($p.Pvc) [$($p.Phase)]: ferma temporaneamente $stop"
+}
+foreach ($v in $volumePlan) {
+    $stop = if ($v.RunningContainers.Count) { "ferma $($v.RunningContainers -join ', ')" } else { 'nessun container attivo' }
+    Write-Log "Volume Docker $($v.Volume): $stop"
+}
+if ($DryRun) { Write-Log 'DryRun: nessuna modifica eseguita.' -Level ok; return }
+if (-not (Confirm-Plan -Yes:$Yes)) { Write-Log 'Annullato.' -Level warn; return }
 
-    $manifestPath = "$BackupPath\$ns\manifest"
-    if (-not $DryRun) { New-Item -ItemType Directory -Force -Path $manifestPath | Out-Null }
+$root = New-BackupFolder -Root $BackupRoot
+Write-Log "Cartella di backup: $root" -Level step
+$failures = @()
+$kubeVersion = (@(Invoke-Kubectl -Arguments @('version', '-o', 'json') -AllowFailure) -join "`n")
 
-    # ── A. Esporta manifest aggiornati dal cluster (formato JSON) ─────────────
-    Write-Host "  [Manifests]" -ForegroundColor Cyan
-    $resources = [ordered]@{
-        "persistentvolumeclaims" = "pvcs.json"
-        "configmaps"             = "configmaps.json"
-        "secrets"                = "secrets.json"
-        "services"               = "services.json"
-        "deployments"            = "deployments.json"
-        "statefulsets"           = "statefulsets.json"
-        "ingress"                = "ingress.json"
+Write-Log 'Inventario' -Level step
+Get-ClusterInventory | Set-Content -LiteralPath (Join-Path $root 'inventory\inventory.tsv') -Encoding utf8NoBOM
+Invoke-Kubectl -Arguments @('get', 'nodes,pv,pvc,sc,ingress', '-A', '-o', 'wide') -AllowFailure | Set-Content -LiteralPath (Join-Path $root 'inventory\cluster.txt') -Encoding utf8NoBOM
+$kubeVersion | Set-Content -LiteralPath (Join-Path $root 'inventory\kubectl-version.json') -Encoding utf8NoBOM
+
+Write-Log 'Export risorse' -Level step
+$restorable = Export-ClusterState -Root $root -AppNamespace $appNamespaces
+Write-Log "Manifest riapplicabili: $restorable" -Level ok
+
+Write-Log 'Release Helm' -Level step
+$helmReleases = @(Export-HelmRelease -Root $root)
+Write-Log "Release salvate: $($helmReleases.Count)" -Level ok
+
+Write-Log 'Dati dei PVC' -Level step
+$savedPvcs = @()
+foreach ($p in $pvcPlan) {
+    try {
+        Backup-Pvc -Item $p -Root $root -Image $HelperImage
+        $savedPvcs += [pscustomobject]@{ namespace = $p.Namespace; pvc = $p.Pvc }
+        Write-Log "$($p.Namespace)/$($p.Pvc)" -Level ok
     }
-    foreach ($res in $resources.Keys) {
-        $outFile = "$manifestPath\$($resources[$res])"
-        if ($DryRun) {
-            Write-Host "    [DRY-RUN] kubectl get $res -n $ns → $($resources[$res])" -ForegroundColor DarkGray
-        } else {
-            $ok = Export-Resource -Namespace $ns -ResourceType $res -OutFile $outFile
-            if ($ok) {
-                # Rimuovi il vecchio .yaml con lo stesso nome base (evita duplicati nel restore)
-                $oldYaml = $outFile -replace '\.json$', '.yaml'
-                if (Test-Path $oldYaml) { Remove-Item $oldYaml -Force }
-                Write-Host "    OK  $($resources[$res])" -ForegroundColor Green
-            }
-        }
+    catch {
+        $failures += "PVC $($p.Namespace)/$($p.Pvc): $($_.Exception.Message)"
+        Write-Log "$($p.Namespace)/$($p.Pvc): $($_.Exception.Message)" -Level error
     }
-
-    # ── B. Backup volumi PVC (auto-discovery da tutti i pod Running) ──────────
-    Write-Host "  [Volumes]" -ForegroundColor Cyan
-
-    $pods_raw = kubectl get pods -n $ns -o json 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "    WARNING: impossibile ottenere i pod di $ns" -ForegroundColor Yellow
-        continue
-    }
-    $running = ($pods_raw | ConvertFrom-Json).items |
-               Where-Object { $_.status.phase -eq "Running" }
-
-    if (-not $running) {
-        Write-Host "    INFO: nessun pod Running in $ns — volumi saltati." -ForegroundColor DarkGray
-        Write-Host ""
-        continue
-    }
-
-    $backed = @{}   # evita di copiare lo stesso PVC più di una volta
-    foreach ($pod in $running) {
-        # Costruisci mappa: nome-volume → claimName
-        $volMap = @{}
-        foreach ($vol in $pod.spec.volumes) {
-            if ($vol.persistentVolumeClaim) {
-                $volMap[$vol.name] = $vol.persistentVolumeClaim.claimName
-            }
-        }
-        if ($volMap.Count -eq 0) { continue }
-
-        foreach ($container in $pod.spec.containers) {
-            foreach ($mount in $container.volumeMounts) {
-                if (-not $volMap.ContainsKey($mount.name)) { continue }
-                $pvcName = $volMap[$mount.name]
-                if ($backed[$pvcName]) { continue }   # già copiato
-
-                $localPath = "$BackupPath\$ns\volumes\$pvcName"
-                $src       = "$ns/$($pod.metadata.name):$($mount.mountPath)/."
-
-                Write-Host "    PVC '$pvcName'  →  $localPath" -ForegroundColor Gray
-                if ($DryRun) {
-                    Write-Host "    [DRY-RUN] kubectl cp $src $localPath" -ForegroundColor DarkGray
-                } else {
-                    New-Item -ItemType Directory -Force -Path $localPath | Out-Null
-                    kubectl cp $src $localPath 2>&1
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Host "      OK" -ForegroundColor Green
-                        $backed[$pvcName] = $true
-                    } else {
-                        Write-Host "      ERROR: kubectl cp fallito" -ForegroundColor Red
-                    }
-                }
-            }
-        }
-    }
-    Write-Host ""
 }
 
-Write-Host "=== Backup completato ===" -ForegroundColor Cyan
-Write-Host "IMPORTANTE: I file in $BackupPath\*\volumes\ sono TEMPORANEI." -ForegroundColor Yellow
-Write-Host "Dopo aver aggiornato Docker Desktop, esegui: .\restore.ps1" -ForegroundColor Yellow
-Write-Host "I file di backup saranno eliminati automaticamente al termine del restore." -ForegroundColor Yellow
+if ($IncludeDockerDesktop) {
+    Write-Log 'Docker Desktop: impostazioni e volumi' -Level step
+    try {
+        Backup-DockerDesktopSetting -Root $root -Context $Context
+        Backup-DockerVolume -Root $root -Plan $volumePlan -Image $HelperImage -PostgresContainer $PostgresContainer -PostgresUser $PostgresUser
+        Write-Log "Volumi salvati: $($volumePlan.Count)" -Level ok
+    }
+    catch {
+        $failures += "Docker Desktop: $($_.Exception.Message)"
+        Write-Log $_.Exception.Message -Level error
+    }
+}
+
+Write-JsonFile -Path (Join-Path $root 'manifest.json') -Object ([pscustomobject]@{
+        createdAt = (Get-Date).ToString('o')
+        context = $Context
+        namespaces = $appNamespaces
+        pvcs = $savedPvcs
+        helmReleases = @($helmReleases | ForEach-Object { "$($_.namespace)/$($_.name)" })
+        dockerDesktop = [bool]$IncludeDockerDesktop
+        status = $(if ($failures.Count) { 'incomplete' } else { 'completed' })
+        failures = @($failures)
+    })
+
+Write-Log 'Verifica del backup' -Level step
+$results = Test-Backup -Root $root
+foreach ($r in $results) { Write-Log "$($r.Name): $($r.Detail)" -Level $(if ($r.Passed) { 'ok' } else { 'error' }) }
+if ($failures.Count -or ($results | Where-Object { -not $_.Passed })) {
+    Write-Log "Backup NON valido: non aggiornare Docker Desktop. Cartella: $root" -Level error
+    exit 1
+}
+Write-Log "Backup completato e verificato: $root" -Level ok

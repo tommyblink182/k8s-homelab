@@ -1,0 +1,10 @@
+# I backup contengono Secret e dati reali: vivono fuori dal repo (default C:\DockerBackups).
+# Queste regole sono solo una rete di sicurezza.
+*.tgz
+*.sha256
+*.count
+*.vhdx
+*.sql
+kubeconfig*
+backups/
+volumes/
