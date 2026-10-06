@@ -24,7 +24,7 @@ Fonti: https://docs.docker.com/desktop/release-notes/ , https://docs.docker.com/
 2. Chiudi Docker Desktop e spegni WSL: `docker desktop stop; wsl --shutdown`. Poi `backup-vhdx.ps1`.
 3. Installa dalla PowerShell elevata, **per-machine** (UAC da accettare):
    ```powershell
-   Start-Process 'C:\DockerBackups\installers\4.94.0\Docker Desktop Installer.exe' -Verb RunAs -Wait -ArgumentList 'install','--accept-license'
+   Start-Process '<cartella-installer>\Docker Desktop Installer.exe' -Verb RunAs -Wait -ArgumentList 'install','--accept-license'
    ```
    L'installazione e' durata oltre 10 minuti, con la finestra "Installing..." ferma e CPU quasi nulla: non interromperla. I file erano gia' alla nuova versione prima della fine.
 4. Avvia Docker Desktop e attendi motore e cluster (nell'esperienza reale: motore dopo ~10 s, API del cluster subito dopo).
@@ -47,7 +47,7 @@ La procedura di rollback non e' stata eseguita (non serviva). Il rollback identi
 
 ## Installer
 
-Cartella `C:\DockerBackups\installers\` (fuori dai dati di Docker, non si cancella con la disinstallazione). Servono per installare o tornare a quella versione.
+Gli installer non sono nel repo. Il 2026-10-06 erano stati scaricati in `C:\DockerBackups\installers\` e poi rimossi a mano: vanno riscaricati dagli URL sotto e verificati con lo SHA256 prima dell'uso (`Get-FileHash`). Tienili fuori dai dati di Docker, cosi' la disinstallazione non li cancella: servono per installare o tornare a quella versione.
 
 | Versione | Build | SHA256 | URL |
 |---|---|---|---|
