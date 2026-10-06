@@ -3,9 +3,9 @@
 .SYNOPSIS
     Verifica un backup (solo lettura) e, con -CompareWithCluster, confronta l'inventario con il cluster attuale.
 .EXAMPLE
-    .\verify-backup.ps1 -BackupPath C:\DockerBackups\20261006-0013 -Deep
+    .\verify-backup.ps1 -BackupPath <BackupRoot>\<timestamp> -Deep
 .EXAMPLE
-    .\verify-backup.ps1 -BackupPath C:\DockerBackups\20261006-0013 -CompareWithCluster -Context docker-desktop
+    .\verify-backup.ps1 -BackupPath <BackupRoot>\<timestamp> -CompareWithCluster -Context docker-desktop
 #>
 [CmdletBinding()]
 param(

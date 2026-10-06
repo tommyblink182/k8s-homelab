@@ -6,7 +6,7 @@ Kubernetes integrato di Docker Desktop (Windows, backend WSL2, provisioner kind,
 
 ## Dove vivono i dati
 
-Docker Desktop usa due ambienti con filesystem separati: la distro WSL `docker-desktop` (comandi `docker`, mount di `C:\`) e i **nodi kind**, che sono container dentro quella VM. I dati dei PVC (storage class `standard`/`hostpath`, local-path) stanno nel nodo worker in `/var/local-path-provisioner/pvc-<uuid>_<ns>_<nome>/`, quindi dentro `docker_data.vhdx`: non sono raggiungibili da Windows e si perdono con un reset del cluster o una disinstallazione. Dettagli in [docs/architecture.md](docs/architecture.md).
+Docker Desktop usa due ambienti con filesystem separati: la distro WSL `docker-desktop` (comandi `docker`, mount dei dischi Windows) e i **nodi kind**, che sono container dentro quella VM. I dati dei PVC (storage class `standard`/`hostpath`, local-path) stanno nel nodo worker in `/var/local-path-provisioner/pvc-<uuid>_<ns>_<nome>/`, quindi dentro `docker_data.vhdx`: non sono raggiungibili da Windows e si perdono con un reset del cluster o una disinstallazione. Dettagli in [docs/architecture.md](docs/architecture.md).
 
 ## Uso
 
@@ -14,21 +14,21 @@ Richiede PowerShell 7.4+, `kubectl`, `docker` e (opzionale) `helm`. Gli script n
 
 ```powershell
 # 1. Piano senza modifiche
-.\backup.ps1 -Context docker-desktop -DryRun
+.\backup.ps1 -Context docker-desktop -BackupRoot <BackupRoot> -DryRun
 
 # 2. Backup (una sola conferma; le app si fermano una alla volta e vengono riavviate)
-.\backup.ps1 -Context docker-desktop -IncludeDockerDesktop -PostgresContainer postgresql_uni
+.\backup.ps1 -Context docker-desktop -BackupRoot <BackupRoot> -IncludeDockerDesktop -PostgresContainer postgresql_uni
 
 # 3. Verifica approfondita (estrae gli archivi in una cartella temporanea)
-.\verify-backup.ps1 -BackupPath C:\DockerBackups\<timestamp> -Deep
+.\verify-backup.ps1 -BackupPath <BackupRoot>\<timestamp> -Deep
 
 # 4. Copia a freddo dei dischi, a Docker Desktop chiuso (rollback identico)
-.\backup-vhdx.ps1 -BackupPath C:\DockerBackups\<timestamp>
+.\backup-vhdx.ps1 -BackupPath <BackupRoot>\<timestamp>
 
 # 5. Dopo l'aggiornamento, se il cluster non e' sopravvissuto
-.\restore.ps1 -Context docker-desktop -BackupPath C:\DockerBackups\<timestamp> -DryRun
-.\restore.ps1 -Context docker-desktop -BackupPath C:\DockerBackups\<timestamp>
-.\verify-backup.ps1 -BackupPath C:\DockerBackups\<timestamp> -CompareWithCluster -Context docker-desktop
+.\restore.ps1 -Context docker-desktop -BackupPath <BackupRoot>\<timestamp> -DryRun
+.\restore.ps1 -Context docker-desktop -BackupPath <BackupRoot>\<timestamp>
+.\verify-backup.ps1 -BackupPath <BackupRoot>\<timestamp> -CompareWithCluster -Context docker-desktop
 ```
 
 Non aggiornare Docker Desktop se la verifica del backup non passa.
@@ -36,7 +36,7 @@ Non aggiornare Docker Desktop se la verifica del backup non passa.
 ## Cosa contiene un backup
 
 ```
-C:\DockerBackups\<yyyyMMdd-HHmm>\
+<BackupRoot>\<yyyyMMdd-HHmm>\
   manifest.json      contesto, namespace, PVC, release Helm, esito
   inventory\         inventory.tsv (namespace|tipo|nome), versioni, stato del cluster
   k8s\full\          dump grezzo di tutto (archivio)
@@ -48,7 +48,7 @@ C:\DockerBackups\<yyyyMMdd-HHmm>\
   vhdx\              copia a freddo di docker_data.vhdx e ext4.vhdx + sha256.txt
 ```
 
-Il backup manuale del 2026-10-06 e' in `backups\20261006-0013` (ignorata da git, formato diverso: vedi [docs/backup-restore.md](docs/backup-restore.md), sezione 7).
+Un backup creato a mano il 2026-10-06 (solo locale, ignorato da git, formato diverso) e' descritto in [docs/backup-restore.md](docs/backup-restore.md), sezione 7.
 
 La cartella contiene Secret in chiaro e dati reali: tienila fuori da git e da cartelle condivise. Resta fuori dai dati di Docker Desktop e di WSL, cosi' disinstallazione e reset non la toccano.
 

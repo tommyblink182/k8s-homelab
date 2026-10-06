@@ -5,10 +5,10 @@ Stato rilevato il 2026-10-06 su Docker Desktop 4.78.0, prima dell'aggiornamento 
 ## Dove vivono i dati
 
 ```
-Windows (C:\)
+Windows
   |- %LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx   ~121 GB   engine Docker, volumi, nodi kind
   |- %LOCALAPPDATA%\Docker\wsl\main\ext4.vhdx          ~0,1 GB   distro docker-desktop
-  `- C:\DockerBackups\                                 backup (fuori dai dati di Docker)
+  `- <BackupRoot>\                                     backup (fuori dai dati di Docker)
 
 docker-desktop (WSL2)  ->  engine Docker  ->  container "nascosti" a 'docker ps -a':
   desktop-control-plane   volume anonimo montato su /var  (~1,4 GB: etcd, immagini)
@@ -17,7 +17,7 @@ docker-desktop (WSL2)  ->  engine Docker  ->  container "nascosti" a 'docker ps 
 
 - I **nodi kind sono container** (immagine `kindest/node:<versione>`) non elencati da `docker ps -a`, ma visibili con `docker inspect desktop-worker`. I loro `/var` sono volumi anonimi: non vanno salvati con un tar a parte (quasi tutto e' cache di immagini).
 - I **PVC** (storage class `standard`, provisioner `rancher.io/local-path`, reclaim `Delete`) stanno in `/var/local-path-provisioner/pvc-<uuid>_<ns>_<nome>/` del nodo worker. Windows non li vede. Un reset del cluster o la disinstallazione li cancella.
-- `hostPath` in un pod scrive sul disco del nodo, non su Windows. Non esiste un modo nativo per far scrivere i pod su `C:\`.
+- `hostPath` in un pod scrive sul disco del nodo, non su Windows. Non esiste un modo nativo per far scrivere i pod direttamente su Windows.
 - `kubectl cp` non conserva owner e permessi: per i dati si usa tar eseguito come root in un pod helper.
 - Il file `docker_data.vhdx` **non si restringe da solo**: liberare spazio dentro Docker non libera spazio su SSD finche' non si compatta (vedi docker-desktop-upgrade.md).
 
@@ -44,7 +44,7 @@ PV orfano `n8n-pv` (hostPath `/tmp/n8n-data`, Retain, Available): non usato da n
 
 ## Accesso da Windows
 
-Le app sono raggiunte dal controller ingress su `localhost`. Nel file `C:\Windows\System32\drivers\etc\hosts` servono le righe:
+Le app sono raggiunte dal controller ingress su `localhost`. Nel file `%SystemRoot%\System32\drivers\etc\hosts` servono le righe:
 
 ```
 127.0.0.1 n8n.kubernetes.local

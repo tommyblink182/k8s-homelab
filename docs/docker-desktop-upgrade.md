@@ -47,7 +47,7 @@ La procedura di rollback non e' stata eseguita (non serviva). Il rollback identi
 
 ## Installer
 
-Gli installer non sono nel repo. Il 2026-10-06 erano stati scaricati in `C:\DockerBackups\installers\` e poi rimossi a mano: vanno riscaricati dagli URL sotto e verificati con lo SHA256 prima dell'uso (`Get-FileHash`). Tienili fuori dai dati di Docker, cosi' la disinstallazione non li cancella: servono per installare o tornare a quella versione.
+Gli installer non sono nel repo. Vanno scaricati dagli URL sotto e verificati con lo SHA256 prima dell'uso (`Get-FileHash`). Tienili in una cartella fuori dai dati di Docker, cosi' la disinstallazione non li cancella: servono per installare o tornare a quella versione.
 
 | Versione | Build | SHA256 | URL |
 |---|---|---|---|

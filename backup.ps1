@@ -8,14 +8,14 @@
     Con -IncludeDockerDesktop salva anche impostazioni e volumi Docker non-K8s.
     La copia dei vhdx si fa con backup-vhdx.ps1 a Docker Desktop chiuso.
 .EXAMPLE
-    .\backup.ps1 -Context docker-desktop -DryRun
+    .\backup.ps1 -Context docker-desktop -BackupRoot <BackupRoot> -DryRun
 .EXAMPLE
-    .\backup.ps1 -Context docker-desktop -IncludeDockerDesktop -PostgresContainer postgresql_uni
+    .\backup.ps1 -Context docker-desktop -BackupRoot <BackupRoot> -IncludeDockerDesktop -PostgresContainer postgresql_uni
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Context,
-    [string]$BackupRoot = 'C:\DockerBackups',
+    [Parameter(Mandatory)][string]$BackupRoot,
     [string[]]$Namespace,
     [switch]$IncludeDockerDesktop,
     [string]$PostgresContainer,

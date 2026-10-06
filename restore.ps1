@@ -7,7 +7,7 @@
     I workload partono solo dopo il ripristino dei dati. Non cancella mai il backup.
     I PVC non vuoti vengono rifiutati salvo -Force. Il ripristino dei volumi Docker e dei vhdx e' manuale (docs\).
 .EXAMPLE
-    .\restore.ps1 -Context docker-desktop -BackupPath C:\DockerBackups\20261006-0013 -DryRun
+    .\restore.ps1 -Context docker-desktop -BackupPath <BackupRoot>\<timestamp> -DryRun
 #>
 [CmdletBinding()]
 param(

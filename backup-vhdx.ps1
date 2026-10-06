@@ -7,7 +7,7 @@
     e non esegue 'wsl --shutdown': chiudi Docker Desktop e spegni WSL prima (vedi docs\docker-desktop-upgrade.md).
     Verifica SHA256 di sorgente e copia.
 .EXAMPLE
-    .\backup-vhdx.ps1 -BackupPath C:\DockerBackups\20261006-0013
+    .\backup-vhdx.ps1 -BackupPath <BackupRoot>\<timestamp>
 #>
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$BackupPath)

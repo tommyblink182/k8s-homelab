@@ -8,7 +8,7 @@ Adottata la procedura **collaudata il 2026-10-06** (backup e aggiornamento 4.78.
 |---|---|---|---|
 | Contesto kubectl | Implicito (contesto corrente) | `-Context` obbligatorio, rifiuta contesti diversi da `docker-desktop` | Il contesto corrente era EKS di **produzione**: gli script vecchi avrebbero esportato e applicato li' |
 | Copia dei dati | `kubectl cp` con app accesa | App a 0 repliche, pod helper in sola lettura, `tar` come root in streaming binario | `kubectl cp` perde owner e permessi, richiede tar nel pod e copia SQLite/WAL in modo incoerente |
-| Cartella di backup | Dentro il repo (`C:\k8s-data`), cancellata dal ripristino | Cartella con timestamp fuori da repo e dati di Docker; il ripristino non cancella nulla | La cartella condivisa con Docker e il repo sono rischiosi; il ripristino distruggeva l'unica copia |
+| Cartella di backup | Dentro il repo, cancellata dal ripristino | Cartella con timestamp fuori da repo e dati di Docker; il ripristino non cancella nulla | La cartella condivisa con Docker e il repo sono rischiosi; il ripristino distruggeva l'unica copia |
 | Tipi di risorsa | Lista fissa di 7 tipi | Tutti i tipi da `api-resources`, dump grezzo + copia ripulita | Perdeva ServiceAccount, Role, CronJob, PV, ecc. |
 | Helm | Manifest grezzi, Secret `sh.helm.release.*` inclusi | Valori e manifest Helm; ingress-nginx si reinstalla con Helm; oggetti Helm esclusi dalla copia riapplicabile | Evitare conflitti con Helm e Secret inutili |
 | Campi runtime | Tolti solo alcuni; restavano `ownerReferences`, `clusterIP`, `volumeName` | Tolti tutti | Un PVC con `volumeName` resta Pending su un cluster nuovo; i Service con `clusterIP` possono confliggere |
@@ -58,5 +58,5 @@ I comandi `docker`, `kubectl`, `helm`, `robocopy`, `tar`, `wsl` devono essere co
 
 - Backup e ripristino non sono stati eseguiti dopo la riscrittura degli script: verificati solo con analisi statica e un test locale del flusso binario. La procedura equivalente e' stata eseguita a mano il 2026-10-06 (backup, aggiornamento, verifica); il ripristino non e' mai servito.
 - Il ripristino dei volumi Docker e dei vhdx e' documentato ma non automatizzato.
-- Il backup del 2026-10-06 (`C:\k8s-data\backups\20261006-0013`, spostato qui su richiesta) e' in formato manuale: `verify-backup.ps1` e `restore.ps1` non lo accettano senza un adattatore (vedi backup-restore.md, sezione 7). In quella posizione `Assert-SafeBackupRoot` rifiuta `backup-vhdx.ps1`, perche' e' dentro il repo; il backup non e' piu' fuori dalla cartella condivisa con Docker Desktop (`C:\k8s-data`), ma e' ignorato da git.
+- Un backup creato a mano il 2026-10-06 (solo locale, ignorato da git) e' in formato manuale: `verify-backup.ps1` e `restore.ps1` non lo accettano senza un adattatore (vedi backup-restore.md, sezione 7). `Assert-SafeBackupRoot` rifiuta le cartelle di backup dentro il repo.
 - `ConvertFrom-Json` puo' fallire con manifest che hanno chiavi uguali a meno delle maiuscole.

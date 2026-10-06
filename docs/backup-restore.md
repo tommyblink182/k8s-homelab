@@ -11,8 +11,8 @@ Ogni comando usa `-Context docker-desktop`. Gli script non cambiano mai il conte
 ## 2. Backup
 
 ```powershell
-.\backup.ps1 -Context docker-desktop -DryRun        # solo piano
-.\backup.ps1 -Context docker-desktop -IncludeDockerDesktop -PostgresContainer postgresql_uni
+.\backup.ps1 -Context docker-desktop -BackupRoot <BackupRoot> -DryRun        # solo piano
+.\backup.ps1 -Context docker-desktop -BackupRoot <BackupRoot> -IncludeDockerDesktop -PostgresContainer postgresql_uni
 ```
 
 Il piano elenca i namespace, i PVC con i workload che verranno **fermati temporaneamente**, e i volumi Docker con i container da fermare. Una sola conferma (`si`), poi per ogni PVC:
@@ -30,8 +30,8 @@ Al termine il backup viene verificato; l'esito e' 0 solo se tutti i controlli pa
 ## 3. Verifica
 
 ```powershell
-.\verify-backup.ps1 -BackupPath C:\DockerBackups\<timestamp>          # veloce
-.\verify-backup.ps1 -BackupPath C:\DockerBackups\<timestamp> -Deep    # estrae gli archivi in una cartella temporanea
+.\verify-backup.ps1 -BackupPath <BackupRoot>\<timestamp>          # veloce
+.\verify-backup.ps1 -BackupPath <BackupRoot>\<timestamp> -Deep    # estrae gli archivi in una cartella temporanea
 ```
 
 Controlli: `manifest.json` presente; nessun file vuoto; **export = inventario** (stessi namespace, tipi e nomi); manifest di `k8s\restore` validi e privi di campi runtime (`status`, `uid`, `resourceVersion`, `managedFields`); ogni archivio con SHA256 corretto, leggibile da `tar -tzf` e con lo stesso numero di voci rilevato nel pod; tutti i PVC del manifest salvati; hash dei vhdx. Un backup non verificato equivale a nessun backup: se un controllo fallisce non si aggiorna Docker Desktop.
@@ -43,7 +43,7 @@ Un'eventuale differenza tra inventario e export puo' dipendere da risorse create
 ```powershell
 docker desktop stop
 wsl --shutdown
-.\backup-vhdx.ps1 -BackupPath C:\DockerBackups\<timestamp>
+.\backup-vhdx.ps1 -BackupPath <BackupRoot>\<timestamp>
 ```
 
 Lo script verifica che il motore sia fermo e la distro non in esecuzione, controlla lo spazio, copia con `robocopy /J` e confronta gli SHA256 di sorgente e copia. Non ferma nulla da solo.
@@ -53,8 +53,8 @@ Lo script verifica che il motore sia fermo e la distro non in esecuzione, contro
 1. Crea il cluster da Docker Desktop (Settings > Kubernetes, kind, 2 nodi). La versione di default puo' essere piu' recente di quella del backup (con la 4.80.0 e' la 1.36): scegli la 1.34.x se il dialog lo permette.
 2. Prova a secco e poi esegui:
    ```powershell
-   .\restore.ps1 -Context docker-desktop -BackupPath C:\DockerBackups\<timestamp> -DryRun
-   .\restore.ps1 -Context docker-desktop -BackupPath C:\DockerBackups\<timestamp>
+   .\restore.ps1 -Context docker-desktop -BackupPath <BackupRoot>\<timestamp> -DryRun
+   .\restore.ps1 -Context docker-desktop -BackupPath <BackupRoot>\<timestamp>
    ```
 3. Il ripristino verifica prima il backup, poi applica in ordine: namespace, PV non legati a PVC, release Helm, risorse **senza i workload**, dati dei PVC (helper in scrittura, rifiuta PVC non vuoti salvo `-Force`, confronta il numero di voci), infine i workload. Le app partono cosi' solo dopo che i dati sono al loro posto.
 4. Helm: il repo del chart viene dedotto da `repos.txt` quando ha il nome del chart (es. `ingress-nginx/ingress-nginx`); altrimenti aggiungilo con `helm repo add` e passa `-HelmChart @{ '<release>' = '<repo>/<chart>' }`.
@@ -68,7 +68,7 @@ Se il backup contiene immagini applicative piu' vecchie di quelle in uso (vedi a
 **Volumi Docker non-K8s**
 ```powershell
 docker volume create <volume>
-docker run --rm -v "<volume>:/v" -v "C:\DockerBackups\<timestamp>\docker-volumes:/b:ro" alpine:3.20 sh -c "tar xzpf /b/<volume>.tgz -C /v"
+docker run --rm -v "<volume>:/v" -v "<BackupRoot>\<timestamp>\docker-volumes:/b:ro" alpine:3.20 sh -c "tar xzpf /b/<volume>.tgz -C /v"
 ```
 Per Postgres e' preferibile ricreare il container e rieseguire `pg_dumpall.sql` con `psql`.
 
@@ -76,7 +76,7 @@ Per Postgres e' preferibile ricreare il container e rieseguire `pg_dumpall.sql` 
 
 ## 7. Il backup manuale del 2026-10-06 (formato diverso)
 
-Si trova in `C:\k8s-data\backups\20261006-0013` (cartella ignorata da git, 1,15 GB, spostata qui dalla posizione originale `C:\DockerBackups`). E' stato creato **a mano**, seguendo la stessa procedura prima di scrivere gli script, quindi il layout differisce:
+E' un backup locale (non nel repo, ignorato da git) creato **a mano**, seguendo la stessa procedura prima di scrivere gli script, quindi il layout differisce:
 
 | Elemento | Backup manuale | Nuovi script |
 |---|---|---|
@@ -90,7 +90,7 @@ Si trova in `C:\k8s-data\backups\20261006-0013` (cartella ignorata da git, 1,15 
 `verify-backup.ps1` e `restore.ps1` **non accettano** questo formato cosi' com'e'. Per usarlo servirebbe un adattatore (suggerimento in fondo alla sintesi). Intanto il ripristino si fa a mano, con gli stessi passi della sezione 5:
 
 ```powershell
-$B = 'C:\k8s-data\backups\20261006-0013'; $K = @('--context','docker-desktop')
+$B = '<cartella-del-backup>'; $K = @('--context','docker-desktop')
 kubectl @K apply -f "$B\k8s\restore\00-namespaces"; kubectl @K apply -f "$B\k8s\restore\10-cluster"
 helm --kube-context docker-desktop install nginx-ingress ingress-nginx/ingress-nginx --version 4.15.1 -n ingress-nginx --create-namespace -f "$B\helm\nginx-ingress.values.yaml"
 # poi, per ogni namespace: i file 20-<ns> tranne deployments.apps_*; i dati dei PVC (pvc\<ns>-<pvc>.tgz) con un pod helper; infine i Deployment
